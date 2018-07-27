@@ -85,7 +85,7 @@ class FDTree(object):
         """
         rhss contains a list of attributes
         """
-        logger.debug("ADD FD: {}=>{}".format(lhs, rhss))
+        # logger.debug("ADD FD: {}=>{}".format(lhs, rhss))
         # print ()
         new_node = None
         current_node = self.root

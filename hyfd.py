@@ -6,6 +6,9 @@ from __future__ import print_function
 
 import sys
 import logging
+import time
+import json
+import uuid
 from hyfd_libs.fd_tree import FDTree
 from hyfd_libs.pli import PLI
 from hyfd_libs.efficiency import Efficiency
@@ -17,8 +20,9 @@ logging.basicConfig(format=FORMAT, level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 INVALID_FDS_THRESHOLD = 0.01
+EFFICIENCY_THRESHOLD_INIT = 0.01
 
-
+cache = set([])
 
 def read_csv(path, separator=','):
     """
@@ -52,27 +56,37 @@ class HyFd(object):
         self.pli_records = None
         self.comparison_suggestions = []
         self.efficiency_queue = []
-        self.efficiency_threshold = 0.4
+        self.efficiency_threshold = EFFICIENCY_THRESHOLD_INIT
         self.go_on = True
 
         self.execute()
         
-        print ({i:j.att for i, j in enumerate(self.plis)})
-        self.print_records()
-        print ("\nRESULTS")
-        for ri, (lhs, rhs) in enumerate(self.fds.read_fds()):
-            # print (lhs, rhs)
-            print (ri+1, [self.plis[i].att for i in lhs], '=>', self.plis[rhs].att)
+        # print ({i:j.att for i, j in enumerate(self.plis)})
+        # self.print_records()
+        # print ("\nRESULTS")
+        # for i, (lhs, rhs) in enumerate(self.get_fds()):
+        #     print (i+1, lhs, rhs)
+
+    def get_fds(self):
+        for lhs, rhs in self.fds.read_fds():
+            yield ([self.plis[i].att for i in lhs], self.plis[rhs].att)
 
 
     def execute(self):
+        tmp = "/tmp/{}.json".format(str(uuid.uuid4()))
+        t0 = time.time()
         self.preproc()
+        iteration = 1
         while self.go_on:
-        # for i in range(2):
             self.sampling()
             self.induction()
             self.validation()
-            # self.go_on = False
+            logger.info("Iteration:{}, N_FDS:{}, TIME:{}".format(iteration, len(list(self.fds.read_fds())), time.time()-t0 ))
+            iteration+=1
+            with open(tmp, 'w') as fout:
+                json.dump(list(self.get_fds()), fout)
+                logger.info("FDs written in:{}".format(tmp))
+
 
 
     def print_records(self):
@@ -120,16 +134,18 @@ class HyFd(object):
                 run_window(efficiency, self.plis[x], self.pli_records, self.non_fds)
                 self.efficiency_queue.append(efficiency)
         else:
-            self.efficiency_threshold /= 2
+            self.efficiency_threshold /= 2.0
             
             for sug in self.comparison_suggestions:
                 self.non_fds.append(match(self.pli_records[sug[0]], self.pli_records[sug[1]]))
         
         while True:
-            logger.debug("\tEFFICIENCY QUEUE:{}".format(self.efficiency_queue))
-            self.efficiency_queue.sort(key=lambda k: k.eval(), reverse=True)
-            best_eff = self.efficiency_queue[0]
             
+            self.efficiency_queue.sort(key=lambda k: k.eval(), reverse=True)
+            logger.debug("\tEFFICIENCY QUEUE LEN:{}".format(len(self.efficiency_queue)))
+            best_eff = self.efficiency_queue[0]
+            # print ('\r', best_eff, self.efficiency_threshold, self.non_fds.has_new, len(self.non_fds), end='')
+            # sys.stdout.flush()
             if best_eff.eval() < self.efficiency_threshold:
                 logger.debug("Out by low efficiency")
                 break
@@ -144,8 +160,7 @@ class HyFd(object):
                 break
     
     def induction(self):
-        logger.debug("INDUCTION")
-        logger.debug("\tNON_FDS:{}:".format(self.non_fds))
+        logger.debug("INDUCTION with N_NON_FDS:{}:".format(self.non_fds.n_elements))
         
         if self.fds is None:
             self.fds = FDTree(n_atts=self.natts)
@@ -162,7 +177,7 @@ class HyFd(object):
         SPECIALIZES THE FDTREE WITH AN INVALID FD lhs => rhs
         YIELDS THE NODES CREATED IN THE FDTREE
         '''
-        logger.debug('SPECIALIZE: {}=>{}'.format(lhs, rhs))
+        # logger.debug('SPECIALIZE: {}=>{}'.format(lhs, rhs))
         invalid_lhss = list(fds.get_fd_and_generals(lhs, rhs))
         for invalid_lhs in invalid_lhss:
             self.fds.remove(invalid_lhs, rhs)
@@ -289,6 +304,8 @@ class HyFd(object):
             for node in self.current_level:
                 lhs = node.get_lhs()
                 rhss = node.get_rhss()
+                if not bool(rhss):
+                    continue
                 
                 valid_rhss = self.refines(lhs, rhss)#, plis, pliRecords, comparisonSuggestions);
                 # print ("\tTesting FD: ", lhs, rhss)
@@ -331,18 +348,18 @@ class HyFd(object):
 
 
 def run_window(efficiency, pli, pli_records, non_fds):
-    logger.debug("\tRUN:{} window::{}".format(pli,efficiency.window ))
+    # logger.debug("\tRUN:{} window::{}".format(pli,efficiency.window ))
     # print ("\tRUN:", pli, 'window::',efficiency.window )
     prev_num_non_fds = len(non_fds)
     for cluster in pli:
         # print ('\t\t:: CLUSTER:',cluster, '|', range(len(cluster)-efficiency.window+1))
         for i in range(len(cluster)-efficiency.window+1):
-            logger.debug('\t\t Comparing tuples {} - {}'.format(cluster[i],cluster[i+efficiency.window-1]))
+            # logger.debug('\t\t Comparing tuples {} - {}'.format(cluster[i],cluster[i+efficiency.window-1]))
             # # print ('\t\t\t->',)
             pivot = pli_records[cluster[i]]
             partner = pli_records[cluster[i+efficiency.window-1]]
             compare = match(pivot, partner)
-            logger.debug('\t\t\tResult:{} || New?:{}'.format( compare, compare not in non_fds))
+            # logger.debug('\t\t\tResult:{} || New?:{}'.format( compare, compare not in non_fds))
             if not all(compare):
                 non_fds.append(compare)
             efficiency.increase_comps()
@@ -356,20 +373,3 @@ if __name__ == "__main__":
     HyFd(sys.argv[1])
 
 
-
-'''
-EXTRACTED FROM VALIDATION
-                # for x in range(self.natts):
-                #     if x in lhs or rhs == x or self.fds.fd_has_generals(lhs, x) or self.fds.find_fd([x], rhs):
-                #         continue
-                #     new_lhs = lhs.union([x])
-                #     if new_lhs.issubset(set(lhs)):
-                #         # print ('r')
-                #         continue
-                #     if self.fds.fd_has_generals(new_lhs, rhs):
-                #         # print ('x', list(self.fds.get_fd_and_generals(new_lhs, rhs)))
-                #         continue
-                #     child = self.fds.add(new_lhs, [rhs])
-                #     if child is not None:
-                #         next_level.append(child)
-'''

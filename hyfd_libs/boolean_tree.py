@@ -12,6 +12,7 @@ class BooleanTree(object):
     def __init__(self):
         self.root = [None, None]
         self.n_elements = 0
+        self.has_new = False
 
     def append(self, lst):
         '''
@@ -30,6 +31,7 @@ class BooleanTree(object):
                 current_node.pop()
             current_node.append(False)
             self.n_elements += 1
+            self.has_new = True
 
     def recursive_read(self, current_node, prefix, single_read=False):
         '''
@@ -45,7 +47,7 @@ class BooleanTree(object):
             else:
                 yield prefix
         else:
-            for i in range(2):
+            for i in range(1,-1,-1):
                 if current_node[i] is not None:
                     for j in self.recursive_read(current_node[i], prefix+[i==1], single_read):
                         yield j
@@ -56,6 +58,8 @@ class BooleanTree(object):
         If single_read is False, all elements are returned.
         If single_read is True, only elements that have not been read are returned.
         '''
+        if single_read:
+            self.has_new = False
         for i in self.recursive_read(self.root, [], single_read):
             yield i
 
@@ -63,6 +67,7 @@ class BooleanTree(object):
         '''
         Read elements in the Tree that have not been read before
         '''
+        self.has_new = False
         for i in self.read(single_read=True):
             yield i
 

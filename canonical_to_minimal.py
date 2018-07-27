@@ -1,3 +1,7 @@
+'''
+Converts a Canonical Cover to a Minimal Cover
+'''
+
 import sys
 import json
 
@@ -62,5 +66,3 @@ if __name__ == "__main__":
     L = read_rules(sys.argv[1])
     print len(L)
     print len(minimal_cover(L))
-    # X = set([0, 1, 2, 3])
-    # print X, derive_full(L, X)

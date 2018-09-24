@@ -59,10 +59,10 @@ def minimal_cover(L):
 
 def read_rules(path):
     with open(path, 'r') as fin:
+        # return [(set(ant), set(con)) for ant, con in json.load(fin)]
         return [(set(ant), set([con])) for ant, con in json.load(fin)]
-        # return [(set(ant), set([con])) for ant, con in json.load(fin)]
 
 if __name__ == "__main__":
     L = read_rules(sys.argv[1])
-    print len(L)
-    print len(minimal_cover(L))
+    print "Canonical Cover Size: {} FDs".format(len(L))
+    print "Minimal Cover Size: {} FDs".format(len(minimal_cover(L)))

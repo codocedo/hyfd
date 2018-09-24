@@ -1,6 +1,8 @@
 """
 HyFd as described in Papenbrock et al - A Hybrid Approach to Functional Dependency Discovery (2016)
-
+There's a difference with TANE, the algorithm uses rules of the form []=>something
+whereas TANE only uses X=>something where X is not-empty.
+Dataset ncvoter has this kind of FDs and yields different results.
 """
 from __future__ import print_function
 
@@ -9,6 +11,7 @@ import logging
 import time
 import json
 import uuid
+import argparse
 from hyfd_libs.fd_tree import FDTree
 from hyfd_libs.pli import PLI
 from hyfd_libs.efficiency import Efficiency
@@ -16,11 +19,13 @@ from hyfd_libs.boolean_tree import BooleanTree
 
 FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
 
-logging.basicConfig(format=FORMAT, level=logging.INFO)
+LOG_FILENAME = 'example.log'
+logging.basicConfig(filename=LOG_FILENAME, format=FORMAT, level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 INVALID_FDS_THRESHOLD = 0.01
-EFFICIENCY_THRESHOLD_INIT = 0.01
+EFFICIENCY_THRESHOLD_INIT = 1
+LEARNING_FACTOR = 0.5
 
 cache = set([])
 
@@ -32,8 +37,13 @@ def read_csv(path, separator=','):
     return mat
 
 def build_pli(lst):
+    '''
+    Generates a PLI (position list indexes) given a column in the database (lst) (partition)
+    Example:
+    [0,1,0,1,1,2] -> [[1,3,4], [0,2]]
+    PLIs are ordered by number of indices in each component and filtered of singletons
+    '''
     hashes = {}
-    #print list(enumerate(lst))
     for i, j in enumerate(lst):
         hashes.setdefault(j, set([])).add(i)
     return sorted([sorted(i) for i in hashes.values() if len(i) > 1], key = lambda k: len(k), reverse=True)
@@ -43,10 +53,10 @@ def transpose(lst, n_rows):
 
 
 class HyFd(object):
-    def __init__(self, path):
+    def __init__(self, args):
         self.natts = 0
         self.nrecs = 0
-        self.records = read_csv(sys.argv[1])
+        self.records = read_csv(args.db_path, separator=args.separator)
         self.att_order_map = []
         self.non_fds = None
         self.fds = None
@@ -56,40 +66,60 @@ class HyFd(object):
         self.pli_records = None
         self.comparison_suggestions = []
         self.efficiency_queue = []
-        self.efficiency_threshold = EFFICIENCY_THRESHOLD_INIT
+        self.efficiency_threshold = args.efft
+        self.learning_factor = args.lf
+        self.invalid_fds_threshold = args.ift
         self.go_on = True
-
         self.execute()
         
-        # print ({i:j.att for i, j in enumerate(self.plis)})
-        # self.print_records()
-        # print ("\nRESULTS")
-        # for i, (lhs, rhs) in enumerate(self.get_fds()):
-        #     print (i+1, lhs, rhs)
+        
 
     def get_fds(self):
+        '''
+        Yields pairs of sets representing the functional dependency
+        returns (list, list)
+        '''
         for lhs, rhs in self.fds.read_fds():
-            yield ([self.plis[i].att for i in lhs], self.plis[rhs].att)
+            yield ([self.plis[i].att for i in lhs], [self.plis[i].att for i in rhs])
 
 
     def execute(self):
+        '''
+        Executes HyFD
+        '''
         tmp = "/tmp/{}.json".format(str(uuid.uuid4()))
         t0 = time.time()
+        
         self.preproc()
         iteration = 1
-        while self.go_on:
-            self.sampling()
-            self.induction()
-            self.validation()
-            logger.info("Iteration:{}, N_FDS:{}, TIME:{}".format(iteration, len(list(self.fds.read_fds())), time.time()-t0 ))
-            iteration+=1
+        try:
+            while self.go_on:
+                self.sampling()
+                self.induction()
+                self.validation()
+                n_fds = self.fds.n_fds
+                print("Iteration:{}, N_FDS:{}, TIME:{}\n".format(iteration, n_fds, time.time()-t0 ))
+                logger.info("Iteration:{}, N_FDS:{}, TIME:{}".format(iteration, n_fds, time.time()-t0 ))
+                iteration+=1
+                with open(tmp, 'w') as fout:
+                    json.dump(list(self.get_fds()), fout)
+                    logger.info("FDs written in:{}".format(tmp))
+        except KeyboardInterrupt:
+            tmp = "/tmp/{}.json".format(str(uuid.uuid4()))
             with open(tmp, 'w') as fout:
                 json.dump(list(self.get_fds()), fout)
-                logger.info("FDs written in:{}".format(tmp))
+                print("\n\nExiting by command")
+                print ("Execution Time: {}".format(time.time()-t0))
+                print ("FDs Found: {}".format(self.fds.n_fds))
+                print("FDs written in: {}".format(tmp))
+            exit()
 
 
 
     def print_records(self):
+        '''
+        Prints a formated version of the records in the database
+        '''
         for ri, record in enumerate(self.pli_records):
             print ("\t"+str(ri)+':'+'|'.join(str(i) if i >= 0 else 'X' for i in record))
         
@@ -97,8 +127,10 @@ class HyFd(object):
         """
         PREPROC as described in algorithm 1 in [1]
         """
+        
         self.nrecs = len(self.records)
         self.natts = len(self.records[0])
+        logger.info("PREPROCESSING with {} tuples and {} attributes".format(self.nrecs, self.natts))
         PLI._nrecs = self.nrecs
 
         # INVERT TABLE RECORDS
@@ -114,11 +146,15 @@ class HyFd(object):
                     col[row] = cluster_id
             self.pli_records.append(col)
         self.pli_records = transpose(self.pli_records, self.nrecs)
+ 
 
 
     def sampling(self):
-        logger.debug("SAMPLING WITH EFF_QUEUE:{}".format(self.efficiency_queue))
-        # efficiency_queue = []
+        '''
+        Sampling as described in algorithm 2 in [1]
+        '''
+        logger.info("SAMPLING with efficiency_queue of length {}".format(len(self.efficiency_queue)))
+        
 
         if not bool(self.efficiency_queue):
             # self.non_fds = set([])
@@ -134,7 +170,7 @@ class HyFd(object):
                 run_window(efficiency, self.plis[x], self.pli_records, self.non_fds)
                 self.efficiency_queue.append(efficiency)
         else:
-            self.efficiency_threshold /= 2.0
+            self.efficiency_threshold *= self.learning_factor
             
             for sug in self.comparison_suggestions:
                 self.non_fds.append(match(self.pli_records[sug[0]], self.pli_records[sug[1]]))
@@ -142,10 +178,12 @@ class HyFd(object):
         while True:
             
             self.efficiency_queue.sort(key=lambda k: k.eval(), reverse=True)
-            logger.debug("\tEFFICIENCY QUEUE LEN:{}".format(len(self.efficiency_queue)))
+            
             best_eff = self.efficiency_queue[0]
-            # print ('\r', best_eff, self.efficiency_threshold, self.non_fds.has_new, len(self.non_fds), end='')
-            # sys.stdout.flush()
+            be = best_eff.eval()
+            print("\rSampling: Efficiency Queue length:{} | Best Efficiency:{} | Efficiency Threshold:{}".format(len(self.efficiency_queue), be, self.efficiency_threshold), end='')
+            sys.stdout.flush()
+            
             if best_eff.eval() < self.efficiency_threshold:
                 logger.debug("Out by low efficiency")
                 break
@@ -158,18 +196,31 @@ class HyFd(object):
                 logger.debug("Out by no candidates")
                 self.go_on = False
                 break
+        print ('')
     
     def induction(self):
-        logger.debug("INDUCTION with N_NON_FDS:{}:".format(self.non_fds.n_elements))
-        
+        '''
+        Induction as defined in algorithm 3 of [1]
+        '''
+        n = self.non_fds.n_new_elements
+        logger.info("INDUCTION with number of non-FDs:{}:".format(n))
+        print ('\rInduction: Specializing {}/{} new non-FDs'.format(0, n), end='')
+        sys.stdout.flush()
         if self.fds is None:
             self.fds = FDTree(n_atts=self.natts)
             self.fds.add([], list(range(self.natts)))
+        
+        for lhsi, tuple_match in enumerate(self.non_fds):
+            print ('\rInduction: Specializing {}/{} new non-FDs'.format(lhsi+1, n), end='')
+            
+            sys.stdout.flush()
+            lhs = [j for j, v in enumerate(tuple_match) if v]
+            rhss = [j for j, v in enumerate(tuple_match) if not v]
+            
+            self.fds.specialize(lhs, rhss)
 
-        for lhs in self.non_fds:
-            for rhs in [j for j, v in enumerate(lhs) if not v]:
-                nodes = list(self.specialize(self.fds, [j for j, v in enumerate(lhs) if v], rhs))
         self.non_fd_pointer = len(self.non_fds)
+        print ('')
         return self.fds
 
     def specialize(self, fds, lhs, rhs):
@@ -179,14 +230,18 @@ class HyFd(object):
         '''
         # logger.debug('SPECIALIZE: {}=>{}'.format(lhs, rhs))
         invalid_lhss = list(fds.get_fd_and_generals(lhs, rhs))
+        print ('**'*100)
+        print (lhs, rhs, invalid_lhss)
+
         for invalid_lhs in invalid_lhss:
             self.fds.remove(invalid_lhs, rhs)
             for x in range(self.natts):
-                if x in invalid_lhs or rhs == x:
+                if x in lhs or rhs == x:
                     continue
                 new_lhs = invalid_lhs.union([x])
-                if new_lhs.issubset(set(lhs)):
-                    continue
+                
+                # if new_lhs.issubset(set(lhs)):
+                #     continue
                 if self.fds.fd_has_generals(new_lhs, rhs):
                     continue
                 yield self.fds.add(new_lhs, [rhs])
@@ -201,12 +256,11 @@ class HyFd(object):
 
         @returns ALL RHS IN RHSS SUCH THAT LHS => RHS IS VALID, IF NONE ARE VALID THEN RETURNS []
         '''
-        logger.debug('REFINE FD {}=>{}'.format(lhs, rhss))
 
-        # for ri, record in enumerate(self.pli_records):
-        #     logger.debug(str(ri)+':'+'|'.join(str(i) if i >= 0 else 'X' for i in record))
         if not bool(rhss):
             return []
+        if not bool(lhs):
+            return [i for i in rhss if len(self.plis[i]) == 1 and len(self.plis[i][0]) == self.nrecs]
         '''
         mask maintains the indices of RHSS that are still valid
         the function returns when mask is empty.
@@ -216,16 +270,12 @@ class HyFd(object):
         s_lhs = sorted(lhs)
         
         clusters = self.plis[s_lhs[0]]
-        # logger.debug(clusters)
-        # logger.debug([[(i, tuple([self.pli_records[i][x] for x in s_lhs+rhss])) for i in cluster] for cluster in self.plis[s_lhs[0]]])
+
         signatures = (( (i, [self.pli_records[i][x] for x in s_lhs+rhss]) for i in cluster) for cluster in clusters)
         
         mapping = {}
         for cluster_encoding in signatures:
-            
             cluster_encoding = list(cluster_encoding)
-            # print ('\t\t\t CLUSTER_ENCODING', list(cluster_encoding))
-            # logger.debug("CLUSTER_ENCODING:{}".format(cluster_encoding))
             for ti, row_map in cluster_encoding:
                 '''
                 row_map has the signature created for the LHS and the RHSS for each attribute
@@ -282,12 +332,14 @@ class HyFd(object):
         return result
     
     def validation(self):
-        logger.debug("VALIDATION")
-        logger.debug(list(self.fds.read_fds()))
-        # Data: fds, plis, plis_records
-        # Result: fds, comparison_suggestions
-        # print ("**", "VALIDATION", "**"*10)
+        '''
+        VALIDATION as described in algorithm 4 of [1]
+        '''
+        logger.info("VALIDATION")
         
+        
+        logger.debug(list(self.fds.read_fds()))
+
         if self.current_level is None:
             self.current_level_number = 0
         
@@ -295,26 +347,29 @@ class HyFd(object):
         
 
         comparison_suggestions = []
+
+        print ('\rValidation: Checking {}/{} Nodes in the FDTree'.format(0, len(self.current_level)), end='')
+        sys.stdout.flush()
         while bool(self.current_level):
+            
             # print ("\tCURRENT_LEVEL_NUMBER: ", self.current_level_number)
             # print ("\tCURRENT_LEVEL: ", self.current_level)
             # VALIDATE ALL FDS ON CURRENT LEVEL
             invalid_fds = []
             num_valid_fds = 0
-            for node in self.current_level:
+            for ni, node in enumerate(self.current_level):
+                print ('\rValidation: Checking {}/{} Nodes in the FDTree'.format(ni+1, len(self.current_level)), end='')
+                sys.stdout.flush()
                 lhs = node.get_lhs()
                 rhss = node.get_rhss()
                 if not bool(rhss):
                     continue
                 
-                valid_rhss = self.refines(lhs, rhss)#, plis, pliRecords, comparisonSuggestions);
-                # print ("\tTesting FD: ", lhs, rhss)
+                valid_rhss = self.refines(lhs, rhss)
+
                 num_valid_fds += len(valid_rhss)
-                invalid_rhss = [i for i in rhss if i not in valid_rhss]
-                logger.debug("\tInvalid attributes in RHS:{}".format( invalid_rhss))
-                # node.invalidate(invalid_rhss)
-                for invalid_rhs in invalid_rhss:
-                    invalid_fds.append( (lhs, invalid_rhs) )
+
+                invalid_fds.append( (lhs, [i for i in rhss if i not in valid_rhss]) )
                 # print (list(self.fds.read_fds()))
 
             # ADD ALL CHILDREN TO THE NEXT LEVEL
@@ -327,8 +382,9 @@ class HyFd(object):
             # SPECIALIZE ALL INVALID FDs
             # print ("\tSPECIALIZING INVALIDS: ", invalid_fds, "||", list(self.fds.read_fds()))
             for invalid_fd in invalid_fds:
-                lhs, rhs = invalid_fd
-                for node in self.specialize(self.fds, lhs, rhs):
+                lhs, rhss = invalid_fd
+                # for node in self.specialize(self.fds, lhs, rhs):
+                for node in self.fds.specialize(lhs, rhss):
                     if node is not None:
                         next_level.append(node)
                 
@@ -336,16 +392,13 @@ class HyFd(object):
             self.current_level = next_level
             self.current_level_number += 1
             # JUDGE EFFICIENCY OF VALIDATION PROCESS
-            if len(invalid_fds) > INVALID_FDS_THRESHOLD * num_valid_fds:
-                # print ("EXITING WITH N_INVALID_FDS:{} > {}, N_VALID_FDS:{}".format(len(invalid_fds), INVALID_FDS_THRESHOLD * num_valid_fds, num_valid_fds))
-                # print ("FINAL FDS", list(self.fds.read_fds()))
+            if len(invalid_fds) > self.invalid_fds_threshold * num_valid_fds:
+                print ('')
                 return self.fds, comparison_suggestions
-        # print ("FINAL FDS", list(self.fds.read_fds()))
+        print ('')
         return self.fds, set([])
-            # break
+
         
-
-
 
 def run_window(efficiency, pli, pli_records, non_fds):
     # logger.debug("\tRUN:{} window::{}".format(pli,efficiency.window ))
@@ -370,6 +423,29 @@ def match(row1, row2):
 
 
 if __name__ == "__main__":
-    HyFd(sys.argv[1])
+    parser = argparse.ArgumentParser(description='HyFD for Python (by VC)')
+    parser.add_argument('db_path', metavar='db_path', type=str, help='path to the database')
+    parser.add_argument('-s', '--separator', metavar='separator', type=str, help='Value separator', default=",")
+    parser.add_argument(
+        '-efft',
+        metavar='efficiency threshold',
+        type=float,
+        default=EFFICIENCY_THRESHOLD_INIT
+    )
+    parser.add_argument(
+        '-lf',
+        metavar='learning factor',
+        type=float,
+        default=LEARNING_FACTOR
+    )
+    parser.add_argument(
+        '-ift',
+        metavar='invalid fds threshold',
+        type=float,
+        default=INVALID_FDS_THRESHOLD
+    )
+
+    
+    HyFd(parser.parse_args())
 
 

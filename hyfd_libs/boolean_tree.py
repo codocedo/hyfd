@@ -1,3 +1,5 @@
+import logging
+
 class BooleanTree(object):
     '''
     BooleanTree that maintains a list of boolean array lists
@@ -92,24 +94,25 @@ class BooleanTree(object):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=level, format='%(name)s - %(levelname)s - %(message)s')
+
     bt = BooleanTree()
     lsts = [(True, False, True, False), (False, True, False, True), (False, True, False, True), (False, False, True, True), (True, False, True, False), (False, False, True, True), (False, False, False, True), (False, True, False, True), (False, True, False, True)]
     for lst in lsts:
         # print "{} in BooleanTree?:{}".format(lst, lst in bt)
         bt.append(lst)
         # print "{} in BooleanTree?:{}".format(lst, lst in bt)
-    print "Return all elements:", list(bt.read(single_read=True))
-    print "Should not return any element:", list(bt.read(single_read=True))
-    bt.append((False, True, False, True))
-    print "Should not return any element:", list(bt.read(single_read=True))
+    logging.info("Return all elements: {}".format(list(bt.read(single_read=True))))
+    logging.info("Should not return any element: {}".format( list(bt.read(single_read=True)) ) )
+    bt.append( (False, True, False, True) )
+    logging.info("Should not return any element: {}".format( list(bt.read(single_read=True)) ) )
 
     new_lst1 = (True, True, False, True)
-    print "{} in BooleanTree?:{}".format(new_lst1, new_lst1 in bt)
-    print "Insert {} in BooleanTree".format(new_lst1)
+    logging.info( "{} in BooleanTree?:{}".format(new_lst1, new_lst1 in bt) )
+    logging.info( "Insert {} in BooleanTree".format(new_lst1) )
     bt.append(new_lst1)
-    print "{} in BooleanTree?:{}".format(new_lst1, new_lst1 in bt)
+    logging.info("{} in BooleanTree?:{}".format(new_lst1, new_lst1 in bt) )
     bt.append((True, True, True, True))
-    print "Return Two Elements:", list([i for i in bt]) # Should return only the previous two elements. Same as print list(bt.read(single_read=True)) 
-    print "Return all elements:", list(bt.read(single_read=False)) # should return all elements
+    logging.info( "Return Two Elements: {}".format( list([i for i in bt]) ) ) # Should return only the previous two elements. Same as print list(bt.read(single_read=True)) 
+    logging.info( "Return all elements: {}".format( list(bt.read(single_read=False) ) ) ) # should return all elements
     
-    # print sorted(set(lsts))

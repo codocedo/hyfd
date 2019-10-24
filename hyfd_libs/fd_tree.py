@@ -344,7 +344,7 @@ class FDTree(FDCollection):
         current_node -- FDNode, current node in the navigation
         depth -- int current depth
         '''
-        print '\t'*depth, current_node.att, current_node._rhs, current_node.link
+        # print '\t'*depth, current_node.att, current_node._rhs, current_node.link
         for i in sorted(current_node.link.keys()):
             self._print_and_recurse(current_node.link[i], depth+1)
 

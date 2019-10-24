@@ -9,6 +9,7 @@ from __future__ import print_function
 import sys
 import logging
 import time
+import datetime
 import json
 import uuid
 import argparse
@@ -18,14 +19,15 @@ from hyfd_libs.efficiency import Efficiency
 from hyfd_libs.boolean_tree import BooleanTree
 
 FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
+LOG_FILENAME = 'hyfd.log'
 
-LOG_FILENAME = 'example.log'
-logging.basicConfig(filename=LOG_FILENAME, format=FORMAT, level=logging.INFO)
-logger = logging.getLogger(__name__)
+# logging.basicConfig(filename=LOG_FILENAME, format=FORMAT, level=logging.INFO)
+# logger = logging.getLogger(__name__)
 
 INVALID_FDS_THRESHOLD = 0.01
 EFFICIENCY_THRESHOLD_INIT = 1
 LEARNING_FACTOR = 0.5
+EFFICIENCY_LIMIT = 10e-15
 
 cache = set([])
 
@@ -56,7 +58,12 @@ class HyFd(object):
     def __init__(self, args):
         self.natts = 0
         self.nrecs = 0
+        self.dbname = args.db_path[args.db_path.rfind('/')+1:args.db_path.rfind('.')]
+        t0 = time.time()
+        self.st = datetime.datetime.fromtimestamp(t0).strftime('%Y%m%d%H%M%S')
+        self.fout_path = 'json/{}-{}.json'.format(self.dbname, self.st)
         self.records = read_csv(args.db_path, separator=args.separator)
+        self.reading_time = time.time()-t0
         self.att_order_map = []
         self.non_fds = None
         self.fds = None
@@ -69,6 +76,7 @@ class HyFd(object):
         self.efficiency_threshold = args.efft
         self.learning_factor = args.lf
         self.invalid_fds_threshold = args.ift
+        self.efficiency_limit = args.el
         self.go_on = True
         self.execute()
         
@@ -98,21 +106,34 @@ class HyFd(object):
                 self.induction()
                 self.validation()
                 n_fds = self.fds.n_fds
-                print("Iteration:{}, N_FDS:{}, TIME:{}\n".format(iteration, n_fds, time.time()-t0 ))
-                logger.info("Iteration:{}, N_FDS:{}, TIME:{}".format(iteration, n_fds, time.time()-t0 ))
+                # print("Iteration:{}, N_FDS:{}, TIME:{}\n".format(iteration, n_fds, time.time()-t0 ))
+                logging.info("Iteration:{}, N_FDS:{}, TIME:{}".format(iteration, n_fds, time.time()-t0 ))
                 iteration+=1
-                with open(tmp, 'w') as fout:
+                with open(self.fout_path, 'w') as fout:
                     json.dump(list(self.get_fds()), fout)
-                    logger.info("FDs written in:{}".format(tmp))
+                    logging.info("FDs written in:{}".format(self.fout_path))
+                self.execution_time = time.time()-t0
         except KeyboardInterrupt:
-            tmp = "/tmp/{}.json".format(str(uuid.uuid4()))
-            with open(tmp, 'w') as fout:
+            # tmp = "/tmp/{}.json".format(str(uuid.uuid4()))
+            with open(self.fout_path, 'w') as fout:
                 json.dump(list(self.get_fds()), fout)
-                print("\n\nExiting by command")
-                print ("Execution Time: {}".format(time.time()-t0))
-                print ("FDs Found: {}".format(self.fds.n_fds))
-                print("FDs written in: {}".format(tmp))
-            exit()
+                logging.info("\n\nExiting by command")
+                logging.info ("Execution Time: {}".format(self.execution_time))
+                logging.info ("FDs Found: {}".format(self.fds.n_fds))
+                logging.info("FDs written in: {}".format(self.fout_path))
+        
+        with open('results/hyfd_results.txt', 'a') as fout:
+            line = '\t'.join([
+                self.dbname,
+                self.fout_path,
+                self.st,
+                str(self.nrecs),
+                str(self.natts),
+                str(self.fds.n_fds),
+                str(self.reading_time),
+                str(self.execution_time),
+            ])
+            fout.write('{}\n'.format(line))
 
 
 
@@ -130,7 +151,7 @@ class HyFd(object):
         
         self.nrecs = len(self.records)
         self.natts = len(self.records[0])
-        logger.info("PREPROCESSING with {} tuples and {} attributes".format(self.nrecs, self.natts))
+        logging.info("PREPROCESSING with {} tuples and {} attributes".format(self.nrecs, self.natts))
         PLI._nrecs = self.nrecs
 
         # INVERT TABLE RECORDS
@@ -153,7 +174,7 @@ class HyFd(object):
         '''
         Sampling as described in algorithm 2 in [1]
         '''
-        logger.info("SAMPLING with efficiency_queue of length {}".format(len(self.efficiency_queue)))
+        logging.info("SAMPLING with efficiency_queue of length {}".format(len(self.efficiency_queue)))
         
 
         if not bool(self.efficiency_queue):
@@ -181,46 +202,50 @@ class HyFd(object):
             
             best_eff = self.efficiency_queue[0]
             be = best_eff.eval()
-            print("\rSampling: Efficiency Queue length:{} | Best Efficiency:{} | Efficiency Threshold:{}".format(len(self.efficiency_queue), be, self.efficiency_threshold), end='')
+            logging.debug( "Sampling: Efficiency Queue length:{} | Best Efficiency:{} | Efficiency Threshold:{}".format(len(self.efficiency_queue), be, self.efficiency_threshold) )
             sys.stdout.flush()
             
-            if best_eff.eval() < self.efficiency_threshold:
-                logger.debug("Out by low efficiency")
-                break
             best_eff.window += 1
             run_window(best_eff, self.plis[best_eff.att], self.pli_records, self.non_fds)
-            
+
             if best_eff.done:
                 del self.efficiency_queue[0]
             if not bool(self.efficiency_queue):
-                logger.debug("Out by no candidates")
+                logging.debug("Out by no candidates")
                 self.go_on = False
                 break
-        print ('')
+
+            if best_eff.eval() < self.efficiency_threshold:
+                logging.debug("Out by low efficiency")
+                break
+        logging.info( "Sampling: Efficiency Queue length:{} | Best Efficiency:{} | Efficiency Threshold:{}".format(len(self.efficiency_queue), be, self.efficiency_threshold) )
+        if self.efficiency_threshold <= self.efficiency_limit:
+            self.go_on = False
+        # print ('')
     
     def induction(self):
         '''
         Induction as defined in algorithm 3 of [1]
         '''
         n = self.non_fds.n_new_elements
-        logger.info("INDUCTION with number of non-FDs:{}:".format(n))
-        print ('\rInduction: Specializing {}/{} new non-FDs'.format(0, n), end='')
+        logging.info("INDUCTION with number of non-FDs:{}:".format(n))
+        # print ('\rInduction: Specializing {}/{} new non-FDs'.format(0, n), end='')
         sys.stdout.flush()
         if self.fds is None:
             self.fds = FDTree(n_atts=self.natts)
             self.fds.add([], list(range(self.natts)))
         
         for lhsi, tuple_match in enumerate(self.non_fds):
-            print ('\rInduction: Specializing {}/{} new non-FDs'.format(lhsi+1, n), end='')
+            # logger.info ('Induction: Specializing {}/{} new non-FDs'.format(lhsi+1, n))
             
-            sys.stdout.flush()
+            # sys.stdout.flush()
             lhs = [j for j, v in enumerate(tuple_match) if v]
             rhss = [j for j, v in enumerate(tuple_match) if not v]
             
             self.fds.specialize(lhs, rhss)
 
         self.non_fd_pointer = len(self.non_fds)
-        print ('')
+        # print ('')
         return self.fds
 
     def specialize(self, fds, lhs, rhs):
@@ -228,10 +253,10 @@ class HyFd(object):
         SPECIALIZES THE FDTREE WITH AN INVALID FD lhs => rhs
         YIELDS THE NODES CREATED IN THE FDTREE
         '''
-        # logger.debug('SPECIALIZE: {}=>{}'.format(lhs, rhs))
+        logging.debug('SPECIALIZE: {}=>{}'.format(lhs, rhs))
         invalid_lhss = list(fds.get_fd_and_generals(lhs, rhs))
-        print ('**'*100)
-        print (lhs, rhs, invalid_lhss)
+        # print ('**'*100)
+        # print (lhs, rhs, invalid_lhss)
 
         for invalid_lhs in invalid_lhss:
             self.fds.remove(invalid_lhs, rhs)
@@ -335,21 +360,20 @@ class HyFd(object):
         '''
         VALIDATION as described in algorithm 4 of [1]
         '''
-        logger.info("VALIDATION")
+        # logging.info("VALIDATION")
         
         
-        logger.debug(list(self.fds.read_fds()))
+        logging.debug(list(self.fds.read_fds()))
 
         if self.current_level is None:
             self.current_level_number = 0
         
         self.current_level = list(self.fds.get_level(self.current_level_number))
         
-
         comparison_suggestions = []
 
-        print ('\rValidation: Checking {}/{} Nodes in the FDTree'.format(0, len(self.current_level)), end='')
-        sys.stdout.flush()
+        logging.info ('Validation: Checking {} Nodes in the FDTree'.format( len(self.current_level)) )
+        # sys.stdout.flush()
         while bool(self.current_level):
             
             # print ("\tCURRENT_LEVEL_NUMBER: ", self.current_level_number)
@@ -358,7 +382,7 @@ class HyFd(object):
             invalid_fds = []
             num_valid_fds = 0
             for ni, node in enumerate(self.current_level):
-                print ('\rValidation: Checking {}/{} Nodes in the FDTree'.format(ni+1, len(self.current_level)), end='')
+                # print ('\rValidation: Checking {}/{} Nodes in the FDTree'.format(ni+1, len(self.current_level)), end='')
                 sys.stdout.flush()
                 lhs = node.get_lhs()
                 rhss = node.get_rhss()
@@ -393,9 +417,9 @@ class HyFd(object):
             self.current_level_number += 1
             # JUDGE EFFICIENCY OF VALIDATION PROCESS
             if len(invalid_fds) > self.invalid_fds_threshold * num_valid_fds:
-                print ('')
+                # print ('')
                 return self.fds, comparison_suggestions
-        print ('')
+        # print ('')
         return self.fds, set([])
 
         
@@ -423,29 +447,47 @@ def match(row1, row2):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='HyFD for Python (by VC)')
-    parser.add_argument('db_path', metavar='db_path', type=str, help='path to the database')
-    parser.add_argument('-s', '--separator', metavar='separator', type=str, help='Value separator', default=",")
-    parser.add_argument(
+    __parser__ = argparse.ArgumentParser(description='HyFD for Python (by VC)')
+    __parser__.add_argument('db_path', metavar='db_path', type=str, help='path to the database')
+    __parser__.add_argument('-s', '--separator', metavar='separator', type=str, help='Value separator', default=",")
+    __parser__.add_argument('-d', '--debug', help='Debug mode', action='store_true')
+    __parser__.add_argument('-m', '--mute', help='No Output', action='store_true')
+    __parser__.add_argument('-l', '--logfile', help='Output to hyfd.log', action='store_true')
+    __parser__.add_argument(
         '-efft',
         metavar='efficiency threshold',
         type=float,
         default=EFFICIENCY_THRESHOLD_INIT
     )
-    parser.add_argument(
+    __parser__.add_argument(
         '-lf',
         metavar='learning factor',
         type=float,
         default=LEARNING_FACTOR
     )
-    parser.add_argument(
+    __parser__.add_argument(
         '-ift',
         metavar='invalid fds threshold',
         type=float,
         default=INVALID_FDS_THRESHOLD
     )
+    __parser__.add_argument(
+        '-el',
+        metavar='efficiency limit (stop execution)',
+        type=float,
+        default=EFFICIENCY_LIMIT
+    )
 
+    args = __parser__.parse_args()
+    level = logging.DEBUG if args.debug else logging.INFO
+    if args.mute:
+        level = logging.CRITICAL
     
-    HyFd(parser.parse_args())
+    if args.logfile:
+        logging.basicConfig( filename=LOG_FILENAME, level=level, format=FORMAT )
+    else:
+        logging.basicConfig( level=level, format=FORMAT )
 
+    logging.debug( "Working with file: {}".format(args.db_path) )
 
+    HyFd(args)

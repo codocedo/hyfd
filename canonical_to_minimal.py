@@ -5,6 +5,9 @@ Converts a Canonical Cover to a Minimal Cover
 import sys
 import json
 from itertools import chain
+import time
+import datetime
+import argparse
 
 from collections import defaultdict
 
@@ -80,11 +83,17 @@ def read_rules(path):
         return [(set(ant), set(con)) for ant, con in json.load(fin)]
 
 if __name__ == "__main__":
-    L = read_rules(sys.argv[1])
-    # for i,j  in enumerate(L):
-    #     print i+1, j
-    mincov = minimal_cover(L)
+    __parser__ = argparse.ArgumentParser(description='Convert Canonical Cover to Minimum Cover using Lin Closure')
+    __parser__.add_argument('db_path', metavar='db_path', type=str, help='path to the database')
+    args = __parser__.parse_args()
     
+    L = read_rules(args.db_path)
+    
+    t0 = time.time()
+    mincov = minimal_cover(L)
+
+    execution_time = time.time() - t0
+
     fout_path = sys.argv[1].replace('.json', '.mincov.json')
     print ("Canonical Cover Size: {} FDs".format(len(L)))
     print ("Minimal Cover Size: {} FDs".format(len(mincov)))
@@ -92,3 +101,15 @@ if __name__ == "__main__":
     with open(fout_path, 'w') as fout:
         json.dump(list(mincov), fout)
         print("FDs written in:{}".format(fout_path))
+    
+    dbname = args.db_path[args.db_path.rfind('/')+1:args.db_path.rfind('.')]
+    
+    with open('results/can2min_results.txt', 'a') as fout:
+        line = '\t'.join([
+            dbname,
+            fout_path,
+            str(len(L)),
+            str(len(mincov)),
+            str(execution_time),
+        ])
+        fout.write('{}\n'.format(line))

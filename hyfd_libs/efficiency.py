@@ -21,6 +21,8 @@ class Efficiency(object):
         if self.comps == self.total:
             self.done = True
     def eval(self):
+        if self.comps == 0:
+            return 0.0
         return self.results/self.comps
     def __str__(self):
         return "[a:{}|T:{}|W:{}|C:{}|R:{}|E:{}||D:{}]".format(self.att, self.total, self.window, self.comps, self.results, self.eval(), self.done)

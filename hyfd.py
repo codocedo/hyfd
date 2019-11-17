@@ -17,6 +17,7 @@ from hyfd_libs.fd_tree import FDTree
 from hyfd_libs.pli import PLI
 from hyfd_libs.efficiency import Efficiency
 from hyfd_libs.boolean_tree import BooleanTree
+import resource
 
 FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
 LOG_FILENAME = 'hyfd.log'
@@ -132,6 +133,7 @@ class HyFd(object):
                 str(self.fds.n_fds),
                 str(self.reading_time),
                 str(self.execution_time),
+                str(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
             ])
             fout.write('{}\n'.format(line))
 

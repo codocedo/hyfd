@@ -8,7 +8,7 @@ from itertools import chain
 import time
 import datetime
 import argparse
-
+import resource
 from collections import defaultdict
 
 def l_close(L, new_closure):
@@ -111,5 +111,6 @@ if __name__ == "__main__":
             str(len(L)),
             str(len(mincov)),
             str(execution_time),
+            str(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
         ])
         fout.write('{}\n'.format(line))

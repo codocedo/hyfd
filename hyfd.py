@@ -26,7 +26,7 @@ LOG_FILENAME = 'hyfd.log'
 # logger = logging.getLogger(__name__)
 
 INVALID_FDS_THRESHOLD = 0.01
-EFFICIENCY_THRESHOLD_INIT = 1
+EFFICIENCY_THRESHOLD_INIT = 0.01
 LEARNING_FACTOR = 0.5
 EFFICIENCY_LIMIT = 10e-15
 
@@ -73,12 +73,13 @@ class HyFd(object):
         self.plis = None
         self.pli_records = None
         self.comparison_suggestions = []
-        self.efficiency_queue = []
+        self.efficiency_queue = None
         self.efficiency_threshold = args.efft
         self.learning_factor = args.lf
         self.invalid_fds_threshold = args.ift
         self.efficiency_limit = args.el
         self.go_on = True
+        self.oldcomps = 0
         self.execute()
         
         
@@ -176,11 +177,13 @@ class HyFd(object):
         '''
         Sampling as described in algorithm 2 in [1]
         '''
-        logging.info("SAMPLING with efficiency_queue of length {}".format(len(self.efficiency_queue)))
+        # print([e.comps for e in self.efficiency_queue])
         
 
-        if not bool(self.efficiency_queue):
+        # if not bool(self.efficiency_queue):
+        if self.efficiency_queue is None:
             # self.non_fds = set([])
+            self.efficiency_queue = []
             self.non_fds = BooleanTree()
             for x, pli in enumerate(self.plis):
                 ileft = x-1
@@ -197,6 +200,9 @@ class HyFd(object):
             
             for sug in self.comparison_suggestions:
                 self.non_fds.append(match(self.pli_records[sug[0]], self.pli_records[sug[1]]))
+
+        
+        logging.info("SAMPLING with efficiency_queue of length {}".format(len(self.efficiency_queue)))
         
         while True:
             
@@ -230,7 +236,9 @@ class HyFd(object):
         Induction as defined in algorithm 3 of [1]
         '''
         n = self.non_fds.n_new_elements
-        logging.info("INDUCTION with number of non-FDs:{}:".format(n))
+        comps = sum([e.comps for e in self.efficiency_queue]) - self.oldcomps
+        self.oldcomps = comps
+        logging.info("INDUCTION with number of non-FDs:{} | tests:{}".format(n, comps))
         # print ('\rInduction: Specializing {}/{} new non-FDs'.format(0, n), end='')
         sys.stdout.flush()
         if self.fds is None:
@@ -374,7 +382,7 @@ class HyFd(object):
         
         comparison_suggestions = []
 
-        logging.info ('Validation: Checking {} Nodes in the FDTree'.format( len(self.current_level)) )
+        logging.info ('Validation: Checking {} Nodes in the FDTree | level {}:{}'.format( len(self.current_level), self.current_level_number, self.natts) )
         # sys.stdout.flush()
         while bool(self.current_level):
             
@@ -419,10 +427,11 @@ class HyFd(object):
             self.current_level_number += 1
             # JUDGE EFFICIENCY OF VALIDATION PROCESS
             if len(invalid_fds) > self.invalid_fds_threshold * num_valid_fds:
-                # print ('')
-                return self.fds, comparison_suggestions
-        # print ('')
-        return self.fds, set([])
+                return self.fds, comparison_suggestions # ACTUAL
+
+        self.go_on = False
+        return self.fds, set([]) # ACTUAL 
+        
 
         
 

@@ -34,7 +34,7 @@ def read_csv(path, separator=','):
     """
     READ CSV
     """
-    mat = [list(map(str, line.replace('\n','').split(separator))) for line in open(path, 'r').readlines()]
+    mat = [list(map(str, line.replace('\n','').split(separator))) for line in open(path, 'r', encoding='utf8').readlines()]
     return mat
 
 def build_pli(lst):

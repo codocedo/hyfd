@@ -77,6 +77,8 @@ class HyFd(object):
         self.efficiency_limit = args.el
         self.oldcomps = 0
 
+        self.row_checks = 0
+
         self.go_on = True
         
         self.output = Output(logging, args.db_path)
@@ -90,7 +92,8 @@ class HyFd(object):
             'ReadingTime',
             'ExecTime',
             'Memory',
-            'Status'
+            'Status',
+            'row_check',
         ]
         self.stats = Stats(logging, log_headers, args.restart)
 
@@ -144,6 +147,7 @@ class HyFd(object):
             str(self.execution_time),
             str(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
             status,
+            str(self.row_checks),
             ])
             
 
@@ -197,7 +201,7 @@ class HyFd(object):
 
             for x in range(self.natts):
                 efficiency = Efficiency(att=x, pli=self.plis[x])
-                run_window(efficiency, self.plis[x], self.pli_records, self.non_fds)
+                self.row_checks += run_window(efficiency, self.plis[x], self.pli_records, self.non_fds)
                 self.efficiency_queue.append(efficiency)
         else:
             self.efficiency_threshold *= self.learning_factor
@@ -218,7 +222,7 @@ class HyFd(object):
             
             
             best_eff.window += 1
-            run_window(best_eff, self.plis[best_eff.att], self.pli_records, self.non_fds)
+            self.row_checks += run_window(best_eff, self.plis[best_eff.att], self.pli_records, self.non_fds)
 
             if best_eff.done:
                 del self.efficiency_queue[0]
@@ -332,6 +336,7 @@ class HyFd(object):
                 '''
                 If -1 is in the signature s1, then it is a singleton and should not be checked.
                 '''
+                self.row_checks += 1 # Add row reading
                 if -1 in s1:
                     continue
                 
@@ -442,12 +447,14 @@ class HyFd(object):
 def run_window(efficiency, pli, pli_records, non_fds):
     # logger.debug("\tRUN:{} window::{}".format(pli,efficiency.window ))
     # print ("\tRUN:", pli, 'window::',efficiency.window )
+    n_rows = 0
     prev_num_non_fds = len(non_fds)
     for cluster in pli:
         # print ('\t\t:: CLUSTER:',cluster, '|', range(len(cluster)-efficiency.window+1))
         for i in range(len(cluster)-efficiency.window+1):
             # logger.debug('\t\t Comparing tuples {} - {}'.format(cluster[i],cluster[i+efficiency.window-1]))
             # # print ('\t\t\t->',)
+            n_rows += 1 # Add row reading
             pivot = pli_records[cluster[i]]
             partner = pli_records[cluster[i+efficiency.window-1]]
             compare = match(pivot, partner)
@@ -456,6 +463,7 @@ def run_window(efficiency, pli, pli_records, non_fds):
                 non_fds.append(compare)
             efficiency.increase_comps()
     efficiency.results += len(non_fds) - prev_num_non_fds
+    return n_rows
 
 def match(row1, row2):
     return tuple([i==j and i>-1 for i, j in zip(row1, row2)])

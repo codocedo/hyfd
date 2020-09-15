@@ -60,6 +60,9 @@ class HyFd(object):
         
         t0 = time.time()
         self.records = read_csv(args.db_path, separator=args.separator)
+        if args.ignore_headers:
+            headers = self.records[0]
+            del self.records[0]
         self.reading_time = time.time()-t0
 
         self.att_order_map = []
@@ -475,6 +478,7 @@ if __name__ == "__main__":
     __parser__.add_argument('-s', '--separator', metavar='separator', type=str, help='Value separator', default=",")
     __parser__.add_argument('-d', '--debug', help='Debug mode', action='store_true')
     __parser__.add_argument('-m', '--mute', help='No Output', action='store_true')
+    __parser__.add_argument('-i', '--ignore_headers', help='Ignore Headers', action='store_true')
     __parser__.add_argument('-l', '--logfile', help='Output to hyfd.log', action='store_true')
     __parser__.add_argument('-r', '--restart', help='Restart file hyfd_results.txt', action='store_true')
     __parser__.add_argument(

@@ -6,9 +6,6 @@ import time
 STAT_DIRECTORY = './results/'
 STAT_FILE = 'hyfd_results.txt'
 
-OUTPUT_DIRECTORY = './json/'
-OUTPUT_FNAME = '{}-{}.json'
-
 class Stats(object):
     def __init__(self, logger, headers, restart=False):
         self.logger = logger
@@ -30,6 +27,8 @@ class Stats(object):
         with open(STAT_DIRECTORY+STAT_FILE, 'a') as fout:
             fout.write('{}\n'.format('\t'.join(results)))
 
+OUTPUT_DIRECTORY = './json/'
+OUTPUT_FNAME = '{}-{}.json'
 
 class Output(object):
     def __init__(self, logger, db_path):
